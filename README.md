@@ -1,2 +1,2 @@
-# log
+# logq
 a simple variadic logger
