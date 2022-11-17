@@ -9,6 +9,9 @@
 using std::cerr; 
 using std::endl;
 using std::ostringstream;
+using std::false_type;
+using std::true_type;
+using std::is_same;
 using std::string;
 using std::vector;
 using std::pair;
@@ -32,55 +35,80 @@ enum logLevel {
   LL_DEBUG
 };
 
-void logProcess(const logLevel& level, string&lvmsg, string& file);
+inline void logProcess(const logLevel& level, string&lvmsg, string& file) {
+  if (level == LL_INFO) {
+    lvmsg = "INFO: ";
+  }
+  else if (level == LL_WARN) {
+    lvmsg = "WARN: ";
+  }
+  else if (level == LL_CRIT) {
+    lvmsg = "CRITICAL ERROR: ";
+  }
+  else if (level == LL_DEBUG) {
+    lvmsg = "DEBUG: ";
+  }
+  else {
+    lvmsg = "undefined error level: ";
+  }
 
-template<typename U, typename V>
-U& logRecursive(U& stream, const V& arg1) {
-   stream << " ";
-   return (stream << arg1);
+  for (unsigned int i = 0; i < file.length(); i++) {
+    if (file[file.length() - i] == '/') {
+      file = file.substr(file.length() - i + 1, file.length());
+    }
+  }
 }
 
-template<typename U, typename V, typename... W>
-U& logRecursive(U&  stream, const V& arg1, const W&... args) {
-   stream << " ";
-   return logRecursive((stream << arg1), args...);
-}
+inline void writeColor(const logLevel& level, string&lvmsg, ostringstream& out) {
+  #ifdef __WIN32
+    //HANDLE hConsole = GetStdHandle(STD_ERROR_HANDLE);
+    //SetConsoleTextAttribute(hConsole, cpos);
+    out << lvmsg;
+    //SetConsoleTextAttribute(hConsole, 7);
+  #else
+    const char* csel[7] = {"\033[0;34m", "\033[0;32m", // blue   , green
+                        "\033[0;36m", "\033[0;31m", // cyan   , red
+                        "\033[0;35m", "\033[0;33m", // magenta, yellow
+                        "\033[0m"};                 // default
 
-template<typename V, typename... W>
-void logOutput(logLevel level, string file, int line, const V& arg1, const W&... args) {
-  
-  #ifdef NO_DEBUG
-    if (level == LL_DEBUG) { return; }
+    int cpos = 7;
+    switch (level) {
+      case LL_DEBUG:
+        cpos = 1;
+        break;
+      case LL_INFO:
+        cpos = 3;
+        break;
+      case LL_WARN:
+        cpos = 6;
+        break;
+      case LL_CRIT:
+        cpos = 4;
+        break;
+    }
+    out << csel[cpos-1] << lvmsg << "\033[0m";
   #endif
-  
-  ostringstream out;
-  string lvmsg = "";
-
-  logProcess(level, lvmsg, file);
-  
-  out << lvmsg;
-  logRecursive((out << arg1), args...);
-  out << " → " << file << ":" << line << endl;
-
-  cerr << out.str();
 }
 
-template<typename V>
-void logOutput(logLevel level, string file, int line, const V& arg1) {
- 
-  #ifdef NO_DEBUG
-    if (level == LL_DEBUG) { return; }
-  #endif 
+template <typename T>
+struct is_vector {
+  static constexpr bool value = false;
+};
 
-  ostringstream out;
-  string lvmsg = "";
+template <typename T>
+struct is_vector<std::vector<T>> {
+  static constexpr bool value = true;
+};
 
-  logProcess(level, lvmsg, file);
+template <typename T>
+struct is_pair {
+  static constexpr bool value = false;
+};
 
-  out << lvmsg << arg1 << " → " << file << ":" << line << endl;
-
-  cerr << out.str();
-}
+template <typename U, typename V>
+struct is_pair<pair<U, V>> {
+  static constexpr bool value = true;
+};
 
 template<typename U, typename V>
 string formatPair(const pair<U, V>& typePair) {
@@ -144,5 +172,93 @@ string formatVector(const vector<pair<U, V>>& vec) {
   }
   
   return s;
+}
+
+void logProcess(const logLevel& level, string&lvmsg, string& file);
+void writeColor(const logLevel& level, string&lvmsg, ostringstream& out);
+
+template<typename U, typename V>
+U& logRecursive(U& stream, const V& arg1) {
+  stream << " ";
+  if constexpr (is_vector<V>::value) {
+    return (stream << formatVector(arg1));
+  }
+  else if constexpr (is_pair<V>::value) {
+    return (stream << formatPair(arg1));
+  }
+  else {
+    return (stream << arg1);
+  }
+}
+
+template<typename U, typename V, typename... W>
+U& logRecursive(U& stream, const V& arg1, const W&... args) {
+  stream << " ";
+  if constexpr (is_vector<V>::value) {
+    return logRecursive((stream << formatVector(arg1)), args...);
+  }
+  else if constexpr (is_pair<V>::value) {
+    return logRecursive((stream << formatPair(arg1)), args...);
+  }
+  else {
+    return logRecursive((stream << arg1), args...);
+  }
+}
+
+template<typename V, typename... W>
+void logOutput(logLevel level, string file, int line, const V& arg1, const W&... args) {
+  
+  #ifdef NO_DEBUG
+    if (level == LL_DEBUG) { return; }
+  #endif
+  
+  ostringstream out;
+  string lvmsg = "";
+
+  logProcess(level, lvmsg, file);
+  writeColor(level, lvmsg, out);
+
+  if constexpr (is_vector<V>::value) {
+    logRecursive((out << formatVector(arg1)), args...);
+  }
+  else if constexpr (is_pair<V>::value) {
+    logRecursive((out << formatPair(arg1)), args...);
+  }
+  else {
+    logRecursive((out << arg1), args...);
+  }
+    
+  out << " → " << file << ":" << line << endl;
+
+  cerr << out.str();
+}
+
+template<typename V>
+void logOutput(logLevel level, string file, int line, const V& arg1) {
+ 
+  #ifdef NO_DEBUG
+    if (level == LL_DEBUG) { return; }
+  #endif 
+
+  ostringstream out;
+  string lvmsg = "";
+
+  logProcess(level, lvmsg, file);
+  writeColor(level, lvmsg, out);
+  
+
+  if constexpr (is_vector<V>::value) {
+    out << formatVector(arg1);
+  }
+  else if constexpr (is_pair<V>::value) {
+    out << formatPair(arg1);
+  }
+  else {
+    out << arg1;
+  }
+    
+  out << " → " << file << ":" << line << endl;
+
+  cerr << out.str();
 }
 
